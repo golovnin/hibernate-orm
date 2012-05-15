@@ -36,8 +36,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
-import org.jboss.logging.Logger;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.hibernate.AssertionFailure;
 import org.hibernate.EntityMode;
@@ -73,7 +72,6 @@ import org.hibernate.engine.spi.ExecuteUpdateResultCheckStyle;
 import org.hibernate.engine.spi.FilterDefinition;
 import org.hibernate.engine.spi.LoadQueryInfluencers;
 import org.hibernate.engine.spi.Mapping;
-import org.hibernate.engine.spi.PersistenceContext;
 import org.hibernate.engine.spi.PersistenceContext.NaturalIdHelper;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.engine.spi.SessionImplementor;
@@ -127,6 +125,7 @@ import org.hibernate.type.EntityType;
 import org.hibernate.type.Type;
 import org.hibernate.type.TypeHelper;
 import org.hibernate.type.VersionType;
+import org.jboss.logging.Logger;
 
 /**
  * Basic functionality for persisting an entity via JDBC
@@ -224,7 +223,7 @@ public abstract class AbstractEntityPersister
 
 	private final Map uniqueKeyLoaders = new HashMap();
 	private final Map lockers = new HashMap();
-	private final Map loaders = new HashMap();
+	private final Map loaders = new LoadersMap();
 
 	// SQL strings
 	private String sqlVersionSelectString;
@@ -3628,6 +3627,70 @@ public abstract class AbstractEntityPersister
 		return loaders;
 	}
 
+    private final class LoadersMap extends ConcurrentHashMap {
+
+        @Override
+        public Object get(Object key) {
+            Object value = super.get(key);
+            if (value == null && key instanceof LockMode) {
+                LockMode lm = (LockMode) key;
+                //TODO: inexact, what we really need to know is: are any outer joins used?
+                boolean disableForUpdate = getSubclassTableSpan() > 1 &&
+                    hasSubclasses() &&
+                    !getFactory().getDialect().supportsOuterJoinForUpdate();
+                UniqueEntityLoader readLoader = (UniqueEntityLoader) super.get(
+                    LockMode.READ);
+                Object oldValue = null;
+                switch (lm) {
+                    case UPGRADE:
+                        value = disableForUpdate ? readLoader : createEntityLoader(
+                            LockMode.UPGRADE);
+                        oldValue = putIfAbsent(LockMode.UPGRADE, value);
+                        break;
+                    case UPGRADE_NOWAIT:
+                        value = disableForUpdate ? readLoader : createEntityLoader(
+                            LockMode.UPGRADE_NOWAIT);
+                        oldValue = putIfAbsent(LockMode.UPGRADE_NOWAIT, value);
+                        break;
+                    case FORCE:
+                        value = disableForUpdate ? readLoader : createEntityLoader(
+                            LockMode.FORCE);
+                        oldValue = putIfAbsent(LockMode.FORCE, value);
+                        break;
+                    case PESSIMISTIC_READ:
+                        value = disableForUpdate ? readLoader : createEntityLoader(
+                            LockMode.PESSIMISTIC_READ);
+                        oldValue = putIfAbsent(LockMode.PESSIMISTIC_READ, value);
+                        break;
+                    case PESSIMISTIC_WRITE:
+                        value = disableForUpdate ? readLoader : createEntityLoader(
+                            LockMode.PESSIMISTIC_WRITE);
+                        oldValue = putIfAbsent(LockMode.PESSIMISTIC_WRITE, value);
+                        break;
+                    case PESSIMISTIC_FORCE_INCREMENT:
+                        value = disableForUpdate ? readLoader : createEntityLoader(
+                            LockMode.PESSIMISTIC_FORCE_INCREMENT);
+                        oldValue = putIfAbsent(LockMode.PESSIMISTIC_FORCE_INCREMENT, value);
+                        break;
+                    case OPTIMISTIC:
+                        value = disableForUpdate ? readLoader : createEntityLoader(
+                            LockMode.OPTIMISTIC);
+                        oldValue = putIfAbsent(LockMode.OPTIMISTIC, value);
+                        break;
+                    case OPTIMISTIC_FORCE_INCREMENT:
+                        value = disableForUpdate ? readLoader : createEntityLoader(
+                            LockMode.OPTIMISTIC_FORCE_INCREMENT);
+                        oldValue = putIfAbsent(LockMode.OPTIMISTIC_FORCE_INCREMENT, value);
+                        break;
+                }
+                if (oldValue != null) {
+                    value = oldValue;
+                }
+            }
+            return value;
+        }
+    }
+
 	//Relational based Persisters should be content with this implementation
 	protected void createLoaders() {
 		final Map loaders = getLoaders();
@@ -3637,48 +3700,48 @@ public abstract class AbstractEntityPersister
 		loaders.put( LockMode.READ, readLoader );
 
 		//TODO: inexact, what we really need to know is: are any outer joins used?
-		boolean disableForUpdate = getSubclassTableSpan() > 1 &&
-				hasSubclasses() &&
-				!getFactory().getDialect().supportsOuterJoinForUpdate();
+//		boolean disableForUpdate = getSubclassTableSpan() > 1 &&
+//				hasSubclasses() &&
+//				!getFactory().getDialect().supportsOuterJoinForUpdate();
 
-		loaders.put(
-				LockMode.UPGRADE,
-				disableForUpdate ?
-						readLoader :
-						createEntityLoader( LockMode.UPGRADE )
-			);
-		loaders.put(
-				LockMode.UPGRADE_NOWAIT,
-				disableForUpdate ?
-						readLoader :
-						createEntityLoader( LockMode.UPGRADE_NOWAIT )
-			);
-		loaders.put(
-				LockMode.FORCE,
-				disableForUpdate ?
-						readLoader :
-						createEntityLoader( LockMode.FORCE )
-			);
-		loaders.put(
-				LockMode.PESSIMISTIC_READ,
-				disableForUpdate ?
-						readLoader :
-						createEntityLoader( LockMode.PESSIMISTIC_READ )
-			);
-		loaders.put(
-				LockMode.PESSIMISTIC_WRITE,
-				disableForUpdate ?
-						readLoader :
-						createEntityLoader( LockMode.PESSIMISTIC_WRITE )
-			);
-		loaders.put(
-				LockMode.PESSIMISTIC_FORCE_INCREMENT,
-				disableForUpdate ?
-						readLoader :
-						createEntityLoader( LockMode.PESSIMISTIC_FORCE_INCREMENT )
-			);
-		loaders.put( LockMode.OPTIMISTIC, createEntityLoader( LockMode.OPTIMISTIC) );
-		loaders.put( LockMode.OPTIMISTIC_FORCE_INCREMENT, createEntityLoader(LockMode.OPTIMISTIC_FORCE_INCREMENT) );
+//		loaders.put(
+//				LockMode.UPGRADE,
+//				disableForUpdate ?
+//						readLoader :
+//						createEntityLoader( LockMode.UPGRADE )
+//			);
+//		loaders.put(
+//				LockMode.UPGRADE_NOWAIT,
+//				disableForUpdate ?
+//						readLoader :
+//						createEntityLoader( LockMode.UPGRADE_NOWAIT )
+//			);
+//		loaders.put(
+//				LockMode.FORCE,
+//				disableForUpdate ?
+//						readLoader :
+//						createEntityLoader( LockMode.FORCE )
+//			);
+//		loaders.put(
+//				LockMode.PESSIMISTIC_READ,
+//				disableForUpdate ?
+//						readLoader :
+//						createEntityLoader( LockMode.PESSIMISTIC_READ )
+//			);
+//		loaders.put(
+//				LockMode.PESSIMISTIC_WRITE,
+//				disableForUpdate ?
+//						readLoader :
+//						createEntityLoader( LockMode.PESSIMISTIC_WRITE )
+//			);
+//		loaders.put(
+//				LockMode.PESSIMISTIC_FORCE_INCREMENT,
+//				disableForUpdate ?
+//						readLoader :
+//						createEntityLoader( LockMode.PESSIMISTIC_FORCE_INCREMENT )
+//			);
+//		loaders.put( LockMode.OPTIMISTIC, createEntityLoader( LockMode.OPTIMISTIC) );
+//		loaders.put( LockMode.OPTIMISTIC_FORCE_INCREMENT, createEntityLoader(LockMode.OPTIMISTIC_FORCE_INCREMENT) );
 
 		loaders.put(
 				"merge",
@@ -3910,11 +3973,11 @@ public abstract class AbstractEntityPersister
 	public CacheEntryStructure getCacheEntryStructure() {
 		return cacheEntryStructure;
 	}
-	
+
 	public boolean hasNaturalIdCache() {
 		return naturalIdRegionAccessStrategy != null;
 	}
-	
+
 	public NaturalIdRegionAccessStrategy getNaturalIdCacheAccessStrategy() {
 		return naturalIdRegionAccessStrategy;
 	}
